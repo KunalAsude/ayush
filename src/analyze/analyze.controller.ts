@@ -16,7 +16,9 @@ export class AnalyzeController {
     async analyze(@Body() dto: AnalyzeDto) {
         this.logger.log(`POST /analyze-symptoms - text: "${dto.text}"`);
         const result = await this.AnalyzeService.analyze(dto.text);
-        this.logger.log(`Response: matched condition "${result.matched_Condition.name}" (confidence: ${result.matched_Condition.confidence})`);
+        this.logger.log(
+            `Response: matched condition "${result.matched_Condition.name}" (severity: ${result.matched_Condition.severity}, recommendation_type: ${result.recommendation_type})`,
+        );
         return result;
     }
 }

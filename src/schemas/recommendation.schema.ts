@@ -13,8 +13,11 @@ export const DietSchema = SchemaFactory.createForClass(Diet);
 
 @Schema({ collection: 'recommendations' })
 export class Recommendation extends Document {
-  @Prop({ type: Types.ObjectId, ref: 'Condition', required: true })
-  condition_id: Types.ObjectId;
+  @Prop({ required: true, index: true })
+  condition_name: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'Condition' })
+  condition_id?: Types.ObjectId;
 
   @Prop({ type: DietSchema })
   diet: Diet;

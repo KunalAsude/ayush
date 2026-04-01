@@ -9,6 +9,30 @@ import { Disclaimer } from "src/schemas/disclaimer.schema"
 
 export class AnalyzeService {
     private readonly logger = new Logger(AnalyzeService.name);
+    private readonly ayushRecommendationThreshold = Number(
+        process.env.AYUSH_RECOMMENDATION_THRESHOLD ?? 0.45,
+    );
+
+    private readonly generalLifestyleSuggestion = {
+        diet: {
+            recommended: [
+                'balanced whole-food meals',
+                'adequate hydration',
+                'high-fiber vegetables and fruits',
+            ],
+            avoid: [
+                'excess sugar',
+                'ultra-processed food',
+                'late-night heavy meals',
+            ],
+        },
+        lifestyle: [
+            '30 minutes of daily physical activity',
+            '7-8 hours of regular sleep',
+            'stress management through breathing or meditation',
+        ],
+        yoga_practices: ['walking', 'gentle stretching', 'anuloma viloma'],
+    };
 
     constructor(
         private normalizationService:NormalizationService,
@@ -26,6 +50,12 @@ export class AnalyzeService {
         private recommendationModel :Model<Recommendation>,
 
     ){}
+
+    private getSeverityLabel(score: number): 'low' | 'moderate' | 'high' {
+        if (score >= 0.75) return 'high';
+        if (score >= this.ayushRecommendationThreshold) return 'moderate';
+        return 'low';
+    }
 
     async analyze(text:string){
         this.logger.debug(`Normalizing input text: "${text}"`);
@@ -45,11 +75,13 @@ export class AnalyzeService {
                 const matchCount = rule.if_symptoms.filter(symptom =>
                     normalizedSymptoms.includes(symptom),
                 ).length;
-                const matchScore = matchCount / rule.if_symptoms.length;
-                return { ...rule, matchScore };
+                const symptomCoverage = matchCount / rule.if_symptoms.length;
+                const baseConfidence = typeof rule.confidence === 'number' ? rule.confidence : 0;
+                const finalScore = (symptomCoverage * 0.7) + (baseConfidence * 0.3);
+                return { ...rule, matchCount, symptomCoverage, finalScore };
             })
-            .filter(rule => rule.matchScore > 0)
-            .sort((a, b) => b.matchScore - a.matchScore);
+            .filter(rule => rule.matchCount > 0)
+            .sort((a, b) => b.finalScore - a.finalScore);
 
         this.logger.debug(`Matched ${matchedRules.length} rule(s) out of ${rules.length}`);
 
@@ -59,7 +91,9 @@ export class AnalyzeService {
         }
 
         const topRule = matchedRules[0];
-        this.logger.log(`Top rule: condition_id=${topRule.then_condition_id}, confidence_score=${topRule.matchScore.toFixed(2)}`);
+        this.logger.log(
+            `Top rule: condition_id=${topRule.then_condition_id}, matched=${topRule.matchCount}/${topRule.if_symptoms.length}, final_score=${topRule.finalScore.toFixed(2)}`,
+        );
 
         const condition = await this.conditionModel.findById(
             topRule.then_condition_id,
@@ -73,10 +107,23 @@ export class AnalyzeService {
         this.logger.log(`Condition resolved: "${condition.ayurvedic_name}"`);
 
         const recommendation = await this.recommendationModel.findOne({
-            condition_id:condition._id,
+            $or: [
+                { condition_name: condition.common_name },
+                { condition_id: condition._id },
+            ],
         });
         if (!recommendation) {
             this.logger.warn(`No recommendation found for condition: ${condition._id}`);
+        }
+
+        const severity = this.getSeverityLabel(topRule.finalScore);
+        const shouldProvideAyushRecommendation =
+            topRule.finalScore >= this.ayushRecommendationThreshold;
+
+        if (!shouldProvideAyushRecommendation) {
+            this.logger.warn(
+                `Score ${topRule.finalScore.toFixed(2)} below threshold ${this.ayushRecommendationThreshold.toFixed(2)}. Returning general lifestyle guidance.`,
+            );
         }
 
         const disclaimer = await this.disclamierModel.findOne({
@@ -88,10 +135,14 @@ export class AnalyzeService {
                 id:condition._id,
                 name:condition.ayurvedic_name,
                 dosha:topRule.then_dosha,
-                confidence: parseFloat(topRule.matchScore.toFixed(2)),
+                severity,
             },
             identified_symptoms:normalizedSymptoms,
-            wellness_recommendation:recommendation,
+            recommendation_type: shouldProvideAyushRecommendation ? 'ayush' : 'general',
+            wellness_recommendation:
+                shouldProvideAyushRecommendation && recommendation
+                    ? recommendation
+                    : this.generalLifestyleSuggestion,
             disclaimer:disclaimer?.text
         };
     }
