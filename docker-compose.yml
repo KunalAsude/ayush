@@ -1,0 +1,13 @@
+version: '3.9'
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ayush-api
+    ports:
+      - "3000:3000"
+    environment:
+      PORT: ${PORT:-3000}
+      MONGODB_URI: ${MONGODB_URI}
+    restart: unless-stopped
